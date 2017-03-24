@@ -39,9 +39,9 @@
         private function get($ticketId, $extid = false)
         {
             if ($extid)
-                $ticket = Ticket::lookup(Ticket::getIdByExtId((int)$ticketId));
+                $ticket = new Ticket(Ticket::getIdByExtId((int)$ticketId));
             else
-                $ticket = Ticket::lookup($ticketId);
+                $ticket = new Ticket($ticketId);
 
             return ($ticket->getId() ? $ticket : null);
         }
@@ -85,7 +85,7 @@
             }
 
             // does the user has permission to do this?
-            if (!$this->user->canAccess($this->user))
+            if (!$this->user->canCreateTickets())
             {
                 return $this->raisePermissionError();
             }
@@ -333,7 +333,7 @@
                 }
             }
 
-            if (isVersion('1.8') || isVersion('1.9'))
+            if (isVersion('1.8') || isVersion('1.9') || isVersion('1.10'))
             {
                 $message = null;
 
@@ -363,7 +363,7 @@
                         }
                         
                         if ($message != null)
-                            $messages[$message['message']['id']] = $message;
+                            $messages[] = $message;
                         
                         //mail("james@atomicx.com", "Thread entry data", print_r($message, true));
                         
@@ -397,81 +397,7 @@
                         }
                         
                         if ($message != null)
-                            $messages[$message['message']['id']] = $message;
-                        
-                        $message = null;
-                        
-                        //mail("james@atomicx.com", "Thread entry data", print_r($entry, true));
-                    }
-                }
-            }
-            
-            if (isVersion('1.10'))
-            {
-                $message = null;
-                if($thread = $ticket->getClientThread()) {
-                    foreach($thread as $entry) {
-                        
-                        //$this->printRAsLog( $entry );
-                        if ($fromDate == null) $fromDate = 0;
-
-                        if (strtotime($entry->created) > strtotime($fromDate))
-                            $message = array(
-                                'message' => array(
-                                    'id'      => $entry->id,
-                                    'created' => date(DATE_RFC3339, strtotime($entry->created)),
-                                    'name'    => Format::htmlchars($entry->poster),
-                                    'body'    => Format::htmlchars($entry->body),
-                                    'type'    => ($entry->type == 'M' ? 'question' : 'answer')
-                                )
-                            );
-                        
-                        if (($tentry = $ticket->getThreadEntry($entry->id))
-                        && ($urls = $tentry->getAttachmentUrls())
-                        && ($links=$tentry->getAttachmentsLinks())) {
-                            foreach($urls as $url) {
-                                $message['message']['attachments'][] = array('download_url' => $url['download_url'], 'filename' => $url['filename']);
-                            }
-                            
-                            //mail("james@atomicx.com", "Thread entry attachments", print_r($urls, true).'\n'.print_r($links, true));
-                        }
-                        
-                        if ($message != null)
-                            $messages[$message['message']['id']] = $message;
-                        
-                        //mail("james@atomicx.com", "Thread entry data", print_r($message, true));
-                        
-                        $message = null;
-                    }
-                }
-                
-                if($thread = $ticket->getNotes()) {
-                    foreach($thread as $entry) {
-                        if ($fromDate == null) $fromDate = 0;
-
-                        if (strtotime($entry->created) > strtotime($fromDate))
-                            $message = array(
-                                'message' => array(
-                                    'id'      => $entry->id,
-                                    'created' => date(DATE_RFC3339, strtotime($entry->created)),
-                                    'name'    => Format::htmlchars($entry->poster),
-                                    'body'    => Format::htmlchars($entry->body),
-                                    'type'    => 'note'
-                                )
-                            );
-                        
-                        if (($tentry = $ticket->getThreadEntry($entry->id))
-                        && ($urls = $tentry->getAttachmentUrls())
-                        && ($links=$tentry->getAttachmentsLinks())) {
-                            foreach($urls as $url) {
-                                $message['message']['attachments'][] = array('download_url' => $url['download_url'], 'filename' => $url['filename']);
-                            }
-                            
-                            //mail("james@atomicx.com", "Thread entry attachments", print_r($urls, true).'\n'.print_r($links, true));
-                        }
-                        
-                        if ($message != null)
-                            $messages[$message['message']['id']] = $message;
+                            $messages[] = $message;
                         
                         $message = null;
                         
@@ -603,24 +529,16 @@
             {
                 if ($result = $ticket->assignStaff($staffId, $message))
                 {
-                    if(!isVersion('1.10'))  { $ticket->reload(); }
+                    $ticket->reload();
                 }
             }
 
-            if (isVersion('1.7') || isVersion('1.8') || isVersion('1.9'))
+            if (isVersion('1.7') || isVersion('1.8') || isVersion('1.9') || isVersion('1.10'))
             {
                 if ($result = $ticket->setStaffId($staffId))
                 {
                     $this->postNote($username, $password, $ticketId, "Ticket assigned to " . $ticket->getStaff()->getName(), $message);
-                    if(!isVersion('1.10'))  { $ticket->reload(); }
-                }
-            }
-            
-            if ( isVersion('1.10'))
-            {
-                if ($result = $ticket->setStaffId($staffId))
-                {
-                    $this->postNote($username, $password, $ticketId, "Ticket assigned to " . $ticket->getStaff()->getName(), $message);
+                    $ticket->reload();
                 }
             }
 
@@ -649,6 +567,12 @@
                 return $this->raiseInvalidUserError($password);
             }
 
+            // does the user has permission to do this?
+            if (!$this->user->canCloseTickets())
+            {
+                return $this->raisePermissionError();
+            }
+
             // Get the ticket
             $ticket = $this->get($ticketId);
 
@@ -657,17 +581,11 @@
             {
                 return $this->raiseTicketNotExistError();
             }
-            
-            // does the user has permission to do this?
-            if (!$this->user->canAccess($ticket))
-            {
-                return $this->raisePermissionError();
-            }
 
             $version = explode('.', getVersion());
 
             // Close ticket
-            if ((isVersion('1.9') && intval($version[2]) >= 4) || isVersion('1.10'))  {
+            if ((isVersion('1.9') || isVersion('1.10')) && intval($version[2]) >= 4) {
                 $result = $ticket->setStatus('3');
             }else{
                 $result = $ticket->close();
@@ -708,15 +626,15 @@
                 return $this->raiseInvalidUserError($password);
             }
 
-            // Get the ticket
-            $ticket = $this->get($ticketId);
-            
             // does the user has permission to do this?
-            if (!$this->user->canAccess($ticket))
+            if (!$this->user->canCloseTickets())
             {
                 return $this->raisePermissionError();
             }
-            
+
+            // Get the ticket
+            $ticket = $this->get($ticketId);
+
             // Do we have a valid ticket?
             if ($ticket == null)
             {
@@ -728,7 +646,7 @@
                 $version = explode('.', getVersion());
                 
                 // Reopen ticket
-                if ((isVersion('1.9') && intval($version[2]) >= 4) || isVersion('1.10'))  {
+                if ((isVersion('1.9') || isVersion('1.10')) && intval($version[2]) >= 4) {
                     $result = $ticket->setStatus('1');
                 }else{
                     $result = $ticket->close();
@@ -766,14 +684,14 @@
                 return $this->raiseInvalidUserError($password);
             }
 
-            // Get the ticket
-            $ticket = $this->get($ticketId);
-            
             // does the user has permission to do this?
-            if (!$this->user->canAccess($ticket))
+            if (!$this->user->canDeleteTickets())
             {
                 return $this->raisePermissionError();
             }
+
+            // Get the ticket
+            $ticket = $this->get($ticketId);
 
             // Do we have a valid ticket?
             if ($ticket == null)
@@ -828,7 +746,7 @@
                     $note = 'Ticket released (unassigned) from ' . $staff->getName() . ' by ' . $thisuser->getName();
                     $ticket->logActivity('Ticket unassigned', $msg);
 
-                    if(!isVersion('1.10'))  { $ticket->reload(); }
+                    $ticket->reload();
                 }
             }
 
@@ -870,23 +788,17 @@
             if (isVersion('1.6'))
                 if ($noteId = $ticket->postNote($title, $message))
                 {
-                    if(!isVersion('1.10'))  { $ticket->reload(); }
+                    $ticket->reload();
                 }
 
-            if (isVersion('1.7') || isVersion('1.8') || isVersion('1.9'))
+            if (isVersion('1.7') || isVersion('1.8') || isVersion('1.9') || isVersion('1.10'))
             {
                 $errors = array();
 
                 if ($noteId = $ticket->postNote(array('title' => $title, 'note' => $message), $errors, $this->user))
                 {
-                    if(!isVersion('1.10'))  { $ticket->reload(); }
+                    $ticket->reload();
                 }
-            }
-            
-            if (isVersion('1.10'))
-            {
-                $errors = array();
-                $noteId = $ticket->postNote(array('title' => $title, 'note' => $message), $errors, $this->user);
             }
 
             // Return the note ID
@@ -925,7 +837,6 @@
 
             // Post reply
             $respId = 0;
-            
 
             if (isVersion('1.6'))
             {
@@ -937,7 +848,7 @@
             $version = explode('.', getVersion());
 
             // Close ticket
-            if ((isVersion('1.9') && intval($version[2]) >= 4))  {
+            if ((isVersion('1.9') || isVersion('1.10')) && intval($version[2]) >= 4) {
                 switch ($status) {
                     case 'close':
                         $status = 3;
@@ -947,26 +858,16 @@
                         break;
                 }
                 $noteId = $ticket->postReply(array('response' => $message, 'msgId' => $messageId, 'reply_ticket_status' => $status), $errors, $alert);
-                //mail('james@atomicx.com', 'ticket reply', 'Status: '.$status.'\nErrors: '.print_r($errors, true).'\nAlert: '.print_r($alert, true));
-            } elseif (isVersion('1.7') || isVersion('1.8') || isVersion('1.9')) {
+                mail('james@atomicx.com', 'ticket reply', 'Status: '.$status.'\nErrors: '.print_r($errors, true).'\nAlert: '.print_r($alert, true));
+            }elseif (isVersion('1.7') || isVersion('1.8') || isVersion('1.9') || isVersion('1.10'))
+            {
                 $noteId = $ticket->postReply(array('response' => $message, 'msgId' => $messageId, 'reply_ticket_status' => $status), $errors, $alert);
-            } elseif (isVersion('1.10')) {
-                switch ($status) {
-                    case 'closed':
-                        $status = 3;
-                        break;
-                    default:
-                        $status = 1;
-                        break;
-                }
-                
-                $noteId = $ticket->postReply(array('response' => $message, 'msgId' => $messageId, 'reply_status_id' => $status), $errors, $alert);
             }
 
             // Refresh and answer if needed
             if ($noteId)
             {
-                if(!isVersion('1.10'))  { $ticket->reload(); }
+                $ticket->reload();
 
                 if ($ticket->isopen())
                     $ticket->markAnswered();
@@ -1011,7 +912,7 @@
             // Post message
             if ($msgId = $ticket->postMessage($message, 'Web'))
             {
-                if(!isVersion('1.10'))  { $ticket->reload(); }
+                $ticket->reload();
             }
 
             // Return the message ID
@@ -1040,9 +941,7 @@
 
             $version = explode('.', getVersion());
             
-            //$this->dumpObjectAsLog( $staff );
-            
-            if ((isVersion('1.9') && intval($version[2]) >= 4) || isVersion('1.10')) {
+            if ((isVersion('1.9') || isVersion('1.10')) && intval($version[2]) >= 4) {
                 // Query tickets
                 if (strtoupper($status) == 'ALL')
                     $sql = 'SELECT DISTINCT ticket_id FROM ' . TICKET_TABLE . ' WHERE 1' .
@@ -1083,7 +982,7 @@
             //mail("james@atomicx.com", "Soap Results SQL", $sql);
             
             $query = db_query($sql);
-            // error_log('sql:'. $sql);
+            
             // Loop through the results
             while ($row = db_fetch_array($query))
             {
